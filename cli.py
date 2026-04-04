@@ -99,19 +99,43 @@ def _build_provider(cfg):
 
 async def _run_prompt(prompt, cfg, mode):
     from koan.loop import run_turn
+    from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
     from koan.render import Renderer
     from koan.session import Session
     from koan.tools.registry import discover_tools, get_registry
+    from koan.types import PermissionLevel
 
     discover_tools()
     tools = get_registry()
     provider = _build_provider(cfg)
     session = Session(cfg.session_dir)
-    system_prompt = build_system_prompt(mode, tools)
     renderer = Renderer()
+    perms = Permissions(
+        mode=PermissionLevel(cfg.permission_mode),
+        rules=cfg.section("permissions").get("rules", {}),
+    )
 
-    print(f"[{mode.value} mode | {cfg.default_provider} | {provider._model}]\n")
+    # Memory mode setup
+    memory_context = ""
+    mem_store = None
+    if mode.value == "memory":
+        from koan.memory.recall import recall, format_memories_for_prompt
+        from koan.memory.store import MemoryStore
+        from koan.tools.memory_tools import set_memory_store
+        mem_store = MemoryStore(cfg.memory_dir)
+        set_memory_store(mem_store)
+        memories = recall(mem_store, prompt, limit=cfg.get("memory", "max_recall_per_turn", default=10))
+        memory_context = format_memories_for_prompt(memories)
+
+    system_prompt = build_system_prompt(mode, tools, memory_context)
+
+    def perm_check(name, inp):
+        tool_def = tools.get(name)
+        tp = tool_def.permission if tool_def else None
+        return perms.check_with_prompt(name, inp, tp)
+
+    print(f"[{mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}]\n")
 
     try:
         await run_turn(
@@ -121,30 +145,58 @@ async def _run_prompt(prompt, cfg, mode):
             tools=tools,
             system_prompt=system_prompt,
             max_iterations=cfg.max_tool_iterations,
+            permission_check=perm_check,
             on_text=renderer.write,
         )
     except Exception as exc:
         print(f"\nError: {exc}")
 
     renderer.newline()
+
+    # Post-session consolidation in memory mode
+    if mem_store and session.path.is_file():
+        from koan.memory.consolidator import consolidate_session
+        stats = consolidate_session(session.path, mem_store)
+        if stats["stored"] or stats["updated"]:
+            print(f"\033[90m◇ Memory: +{stats['stored']} new, ~{stats['updated']} updated, -{stats['deleted']} removed\033[0m")
+
     print(f"\n[session: {session.session_id}]")
 
 
 async def _run_repl(cfg, mode):
     from koan.loop import run_turn
+    from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
     from koan.render import Renderer
     from koan.session import Session
     from koan.tools.registry import discover_tools, get_registry
+    from koan.types import PermissionLevel
 
     discover_tools()
     tools = get_registry()
     provider = _build_provider(cfg)
     session = Session(cfg.session_dir)
-    system_prompt = build_system_prompt(mode, tools)
     renderer = Renderer()
+    perms = Permissions(
+        mode=PermissionLevel(cfg.permission_mode),
+        rules=cfg.section("permissions").get("rules", {}),
+    )
 
-    print(f"Kōan v{__version__} — {mode.value} mode | {cfg.default_provider} | {provider._model}")
+    # Memory mode setup
+    mem_store = None
+    if mode.value == "memory":
+        from koan.memory.store import MemoryStore
+        from koan.tools.memory_tools import set_memory_store
+        mem_store = MemoryStore(cfg.memory_dir)
+        set_memory_store(mem_store)
+
+    def perm_check(name, inp):
+        tool_def = tools.get(name)
+        tp = tool_def.permission if tool_def else None
+        return perms.check_with_prompt(name, inp, tp)
+
+    mem_label = f" | {mem_store.count()} memories" if mem_store else ""
+    print(f"Kōan v{__version__} — {mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}{mem_label}")
     print("Type /help for commands, /quit to exit.\n")
 
     while True:
@@ -161,6 +213,7 @@ async def _run_repl(cfg, mode):
             print("  /config   Show config")
             print("  /mode     Show current mode")
             print("  /session  Show session info")
+            print("  /memory   Show memory stats" if mem_store else "")
             print()
             continue
         if user_input == "/config":
@@ -174,6 +227,23 @@ async def _run_repl(cfg, mode):
             print(f"Messages: {len(session.messages)}")
             print(f"Tokens: ~{session.cumulative_tokens}")
             continue
+        if user_input == "/memory" and mem_store:
+            print(f"Memories: {mem_store.count()}")
+            for m in mem_store.all()[:10]:
+                print(f"  [{m.type.value}] {m.content[:80]}")
+            if mem_store.count() > 10:
+                print(f"  ... and {mem_store.count() - 10} more")
+            print()
+            continue
+
+        # Recall memories for this turn
+        memory_context = ""
+        if mem_store:
+            from koan.memory.recall import recall, format_memories_for_prompt
+            memories = recall(mem_store, user_input, limit=cfg.get("memory", "max_recall_per_turn", default=10))
+            memory_context = format_memories_for_prompt(memories)
+
+        system_prompt = build_system_prompt(mode, tools, memory_context)
 
         print()
         try:
@@ -184,12 +254,20 @@ async def _run_repl(cfg, mode):
                 tools=tools,
                 system_prompt=system_prompt,
                 max_iterations=cfg.max_tool_iterations,
+                permission_check=perm_check,
                 on_text=renderer.write,
             )
         except Exception as exc:
             print(f"\nError: {exc}")
         renderer.newline()
         print()
+
+    # Post-session consolidation
+    if mem_store and session.path.is_file():
+        from koan.memory.consolidator import consolidate_session
+        stats = consolidate_session(session.path, mem_store)
+        if stats["stored"] or stats["updated"]:
+            print(f"\033[90m◇ Memory: +{stats['stored']} new, ~{stats['updated']} updated, -{stats['deleted']} removed\033[0m")
 
     print(f"[session: {session.session_id}]")
     print("Goodbye.")

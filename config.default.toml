@@ -30,7 +30,7 @@ role_arn = ""
 profile = ""
 
 [permissions]
-mode = "workspace_write"
+mode = "full_access"
 workspace_root = "auto"
 
 [permissions.rules]
