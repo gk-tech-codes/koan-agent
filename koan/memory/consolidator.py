@@ -197,6 +197,26 @@ def consolidate_session(session_path: Path, store: MemoryStore, threshold: float
     }
 
 
+def consolidate_session_with_episodes(
+    session_path: Path, store: MemoryStore, episodic_store=None, threshold: float = 0.4
+) -> dict:
+    """Run full consolidation: semantic + episodic."""
+    stats = consolidate_session(session_path, store, threshold)
+
+    # Episodic: compress session into an episode
+    if episodic_store is not None:
+        from koan.memory.episodic import extract_episode
+        episode = extract_episode(session_path)
+        if episode:
+            episodic_store.store(episode)
+            stats["episode"] = True
+        else:
+            stats["episode"] = False
+    return stats
+    from koan.memory.scorer import _hours_since
+    return _hours_since(m.updated_at)
+
+
 def _hours_since_update(m: Memory) -> float:
     from koan.memory.scorer import _hours_since
     return _hours_since(m.updated_at)

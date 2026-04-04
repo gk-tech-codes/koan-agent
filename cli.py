@@ -119,14 +119,20 @@ async def _run_prompt(prompt, cfg, mode):
     # Memory mode setup
     memory_context = ""
     mem_store = None
+    ep_store = None
     if mode.value == "memory":
         from koan.memory.recall import recall, format_memories_for_prompt
         from koan.memory.store import MemoryStore
+        from koan.memory.episodic import EpisodicStore, format_episodes_for_prompt
         from koan.tools.memory_tools import set_memory_store
         mem_store = MemoryStore(cfg.memory_dir)
+        ep_store = EpisodicStore(cfg.memory_dir)
         set_memory_store(mem_store)
         memories = recall(mem_store, prompt, limit=cfg.get("memory", "max_recall_per_turn", default=10))
         memory_context = format_memories_for_prompt(memories)
+        ep_context = format_episodes_for_prompt(ep_store.recent(3))
+        if ep_context:
+            memory_context = memory_context + "\n\n" + ep_context if memory_context else ep_context
 
     system_prompt = build_system_prompt(mode, tools, memory_context)
 
@@ -155,10 +161,19 @@ async def _run_prompt(prompt, cfg, mode):
 
     # Post-session consolidation in memory mode
     if mem_store and session.path.is_file():
-        from koan.memory.consolidator import consolidate_session
-        stats = consolidate_session(session.path, mem_store)
-        if stats["stored"] or stats["updated"]:
-            print(f"\033[90m◇ Memory: +{stats['stored']} new, ~{stats['updated']} updated, -{stats['deleted']} removed\033[0m")
+        from koan.memory.consolidator import consolidate_session_with_episodes
+        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store)
+        parts = []
+        if stats["stored"]:
+            parts.append(f"+{stats['stored']} new")
+        if stats["updated"]:
+            parts.append(f"~{stats['updated']} updated")
+        if stats["deleted"]:
+            parts.append(f"-{stats['deleted']} removed")
+        if stats.get("episode"):
+            parts.append("episode saved")
+        if parts:
+            print(f"\033[90m◇ Memory: {', '.join(parts)}\033[0m")
 
     print(f"\n[session: {session.session_id}]")
 
@@ -184,10 +199,13 @@ async def _run_repl(cfg, mode):
 
     # Memory mode setup
     mem_store = None
+    ep_store = None
     if mode.value == "memory":
         from koan.memory.store import MemoryStore
+        from koan.memory.episodic import EpisodicStore
         from koan.tools.memory_tools import set_memory_store
         mem_store = MemoryStore(cfg.memory_dir)
+        ep_store = EpisodicStore(cfg.memory_dir)
         set_memory_store(mem_store)
 
     def perm_check(name, inp):
@@ -240,8 +258,13 @@ async def _run_repl(cfg, mode):
         memory_context = ""
         if mem_store:
             from koan.memory.recall import recall, format_memories_for_prompt
+            from koan.memory.episodic import format_episodes_for_prompt
             memories = recall(mem_store, user_input, limit=cfg.get("memory", "max_recall_per_turn", default=10))
             memory_context = format_memories_for_prompt(memories)
+            if ep_store:
+                ep_context = format_episodes_for_prompt(ep_store.recent(3))
+                if ep_context:
+                    memory_context = memory_context + "\n\n" + ep_context if memory_context else ep_context
 
         system_prompt = build_system_prompt(mode, tools, memory_context)
 
@@ -264,10 +287,19 @@ async def _run_repl(cfg, mode):
 
     # Post-session consolidation
     if mem_store and session.path.is_file():
-        from koan.memory.consolidator import consolidate_session
-        stats = consolidate_session(session.path, mem_store)
-        if stats["stored"] or stats["updated"]:
-            print(f"\033[90m◇ Memory: +{stats['stored']} new, ~{stats['updated']} updated, -{stats['deleted']} removed\033[0m")
+        from koan.memory.consolidator import consolidate_session_with_episodes
+        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store)
+        parts = []
+        if stats["stored"]:
+            parts.append(f"+{stats['stored']} new")
+        if stats["updated"]:
+            parts.append(f"~{stats['updated']} updated")
+        if stats["deleted"]:
+            parts.append(f"-{stats['deleted']} removed")
+        if stats.get("episode"):
+            parts.append("episode saved")
+        if parts:
+            print(f"\033[90m◇ Memory: {', '.join(parts)}\033[0m")
 
     print(f"[session: {session.session_id}]")
     print("Goodbye.")
