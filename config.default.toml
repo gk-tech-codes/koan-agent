@@ -62,4 +62,4 @@ after_session = []
 
 [plugins]
 enabled = []
-directories = ["~/.koan/plugins", ".koan/plugins"]
+directories = ["~/.koan/plugins", ".koan/plugins", "plugins"]

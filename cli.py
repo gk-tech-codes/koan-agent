@@ -373,6 +373,19 @@ def main():
     else:
         asyncio.run(_run_repl(cfg, mode))
 
+    # Load plugins
+    plugin_dirs = cfg.get("plugins", "directories", default=["~/.koan/plugins", ".koan/plugins"])
+    if isinstance(plugin_dirs, list):
+        from koan.plugins.loader import discover_plugins
+        loaded = discover_plugins(plugin_dirs)
+        if loaded:
+            print(f"\033[90m◇ Plugins: {', '.join(loaded)}\033[0m")
+
+    if positional:
+        asyncio.run(_run_prompt(" ".join(positional), cfg, mode))
+    else:
+        asyncio.run(_run_repl(cfg, mode))
+
 
 if __name__ == "__main__":
     main()

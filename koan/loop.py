@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from koan.errors import ProviderError
+from koan.plugins.hooks import dispatch as dispatch_hook
 from koan.session import Session
 from koan.spinner import Spinner
 from koan.tools.registry import ToolRegistry
@@ -109,6 +110,11 @@ async def run_turn(
             last_assistant_msg = assistant_msg
 
         if not tool_uses:
+            # Dispatch on_turn_end with usage info
+            usage_data = {}
+            if usage:
+                usage_data = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+            await dispatch_hook("on_turn_end", usage=usage_data)
             break
 
         # Execute each tool call
@@ -127,13 +133,36 @@ async def run_turn(
                     ))
                     continue
 
+            # Run before_tool hooks
+            hook_result = await dispatch_hook(
+                "before_tool", tool_name=tu.name, tool_input=tu.input
+            )
+            if hook_result.denied:
+                result_blocks.append(ContentBlock(
+                    type="tool_result",
+                    data={
+                        "tool_use_id": tu.id,
+                        "output": f"Blocked by plugin: {hook_result.messages[0] if hook_result.messages else 'denied'}",
+                        "is_error": True,
+                    },
+                ))
+                continue
+            # Apply input modifications from hooks
+            effective_input = hook_result.updated_input if hook_result.updated_input else tu.input
+
             tool_spinner = Spinner(f"{tu.name}", tool=True)
             tool_spinner.start()
 
-            result = await tools.execute(tu.name, tu.input)
+            result = await tools.execute(tu.name, effective_input)
             result.tool_use_id = tu.id
 
             tool_spinner.stop()
+
+            # Run after_tool hooks
+            await dispatch_hook(
+                "after_tool", tool_name=tu.name, tool_input=effective_input,
+                output=result.output, is_error=result.is_error,
+            )
 
             result_blocks.append(ContentBlock(
                 type="tool_result",
