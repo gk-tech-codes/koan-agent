@@ -198,9 +198,9 @@ def consolidate_session(session_path: Path, store: MemoryStore, threshold: float
 
 
 def consolidate_session_with_episodes(
-    session_path: Path, store: MemoryStore, episodic_store=None, threshold: float = 0.4
+    session_path: Path, store: MemoryStore, episodic_store=None, playbook_store=None, threshold: float = 0.4
 ) -> dict:
-    """Run full consolidation: semantic + episodic."""
+    """Run full consolidation: semantic + episodic + procedural."""
     stats = consolidate_session(session_path, store, threshold)
 
     # Episodic: compress session into an episode
@@ -212,6 +212,15 @@ def consolidate_session_with_episodes(
             stats["episode"] = True
         else:
             stats["episode"] = False
+
+    # Procedural: extract playbooks from tool sequences
+    if playbook_store is not None:
+        from koan.playbook.extractor import extract_playbooks_from_session
+        new_playbooks = extract_playbooks_from_session(session_path, playbook_store)
+        stats["playbooks_learned"] = len(new_playbooks)
+    else:
+        stats["playbooks_learned"] = 0
+
     return stats
     from koan.memory.scorer import _hours_since
     return _hours_since(m.updated_at)

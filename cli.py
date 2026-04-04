@@ -120,19 +120,26 @@ async def _run_prompt(prompt, cfg, mode):
     memory_context = ""
     mem_store = None
     ep_store = None
+    pb_store = None
     if mode.value == "memory":
         from koan.memory.recall import recall, format_memories_for_prompt
         from koan.memory.store import MemoryStore
         from koan.memory.episodic import EpisodicStore, format_episodes_for_prompt
+        from koan.playbook.store import PlaybookStore
+        from koan.playbook.matcher import match_playbook, format_playbook_offer, format_playbooks_for_prompt
         from koan.tools.memory_tools import set_memory_store
         mem_store = MemoryStore(cfg.memory_dir)
         ep_store = EpisodicStore(cfg.memory_dir)
+        pb_store = PlaybookStore(cfg.memory_dir)
         set_memory_store(mem_store)
         memories = recall(mem_store, prompt, limit=cfg.get("memory", "max_recall_per_turn", default=10))
         memory_context = format_memories_for_prompt(memories)
         ep_context = format_episodes_for_prompt(ep_store.recent(3))
+        pb_context = format_playbooks_for_prompt(pb_store.all())
         if ep_context:
             memory_context = memory_context + "\n\n" + ep_context if memory_context else ep_context
+        if pb_context:
+            memory_context = memory_context + "\n\n" + pb_context if memory_context else pb_context
 
     system_prompt = build_system_prompt(mode, tools, memory_context)
 
@@ -162,7 +169,7 @@ async def _run_prompt(prompt, cfg, mode):
     # Post-session consolidation in memory mode
     if mem_store and session.path.is_file():
         from koan.memory.consolidator import consolidate_session_with_episodes
-        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store)
+        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store, pb_store)
         parts = []
         if stats["stored"]:
             parts.append(f"+{stats['stored']} new")
@@ -172,6 +179,8 @@ async def _run_prompt(prompt, cfg, mode):
             parts.append(f"-{stats['deleted']} removed")
         if stats.get("episode"):
             parts.append("episode saved")
+        if stats.get("playbooks_learned"):
+            parts.append(f"{stats['playbooks_learned']} playbook(s) learned")
         if parts:
             print(f"\033[90m◇ Memory: {', '.join(parts)}\033[0m")
 
@@ -200,12 +209,15 @@ async def _run_repl(cfg, mode):
     # Memory mode setup
     mem_store = None
     ep_store = None
+    pb_store = None
     if mode.value == "memory":
         from koan.memory.store import MemoryStore
         from koan.memory.episodic import EpisodicStore
+        from koan.playbook.store import PlaybookStore
         from koan.tools.memory_tools import set_memory_store
         mem_store = MemoryStore(cfg.memory_dir)
         ep_store = EpisodicStore(cfg.memory_dir)
+        pb_store = PlaybookStore(cfg.memory_dir)
         set_memory_store(mem_store)
 
     def perm_check(name, inp):
@@ -259,12 +271,17 @@ async def _run_repl(cfg, mode):
         if mem_store:
             from koan.memory.recall import recall, format_memories_for_prompt
             from koan.memory.episodic import format_episodes_for_prompt
+            from koan.playbook.matcher import format_playbooks_for_prompt
             memories = recall(mem_store, user_input, limit=cfg.get("memory", "max_recall_per_turn", default=10))
             memory_context = format_memories_for_prompt(memories)
             if ep_store:
                 ep_context = format_episodes_for_prompt(ep_store.recent(3))
                 if ep_context:
                     memory_context = memory_context + "\n\n" + ep_context if memory_context else ep_context
+            if pb_store:
+                pb_context = format_playbooks_for_prompt(pb_store.all())
+                if pb_context:
+                    memory_context = memory_context + "\n\n" + pb_context if memory_context else pb_context
 
         system_prompt = build_system_prompt(mode, tools, memory_context)
 
@@ -288,7 +305,7 @@ async def _run_repl(cfg, mode):
     # Post-session consolidation
     if mem_store and session.path.is_file():
         from koan.memory.consolidator import consolidate_session_with_episodes
-        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store)
+        stats = consolidate_session_with_episodes(session.path, mem_store, ep_store, pb_store)
         parts = []
         if stats["stored"]:
             parts.append(f"+{stats['stored']} new")
@@ -298,6 +315,8 @@ async def _run_repl(cfg, mode):
             parts.append(f"-{stats['deleted']} removed")
         if stats.get("episode"):
             parts.append("episode saved")
+        if stats.get("playbooks_learned"):
+            parts.append(f"{stats['playbooks_learned']} playbook(s) learned")
         if parts:
             print(f"\033[90m◇ Memory: {', '.join(parts)}\033[0m")
 
@@ -336,7 +355,14 @@ def main():
         print("[memory]  (Phase 3)")
         return
     if cmd == "playbooks":
-        print("[playbooks]  (Phase 5)")
+        from koan.playbook.store import PlaybookStore
+        pb_store = PlaybookStore(cfg.memory_dir)
+        if pb_store.count() == 0:
+            print("No playbooks learned yet. Use --memory mode to build up workflows.")
+        else:
+            print(f"Learned playbooks ({pb_store.count()}):\n")
+            for pb in pb_store.all():
+                print(f"  {pb.summary()}")
         return
     if cmd == "sessions":
         print("[sessions]  (Phase 1 — list not yet implemented)")
