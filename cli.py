@@ -251,11 +251,13 @@ async def _run_repl(cfg, mode):
         if user_input in ("/quit", "/exit", "/q"):
             break
         if user_input == "/help":
-            print("  /quit     Exit")
-            print("  /config   Show config")
-            print("  /mode     Show current mode")
-            print("  /session  Show session info")
-            print("  /memory   Show memory stats" if mem_store else "")
+            print("  /quit      Exit")
+            print("  /config    Show config")
+            print("  /mode      Show current mode")
+            print("  /session   Show session info")
+            print("  /sessions  List past sessions")
+            print("  /memory    Show memories" if mem_store else "")
+            print("  /playbooks Show learned playbooks" if pb_store else "")
             print()
             continue
         if user_input == "/config":
@@ -275,6 +277,20 @@ async def _run_repl(cfg, mode):
                 print(f"  [{m.type.value}] {m.content[:80]}")
             if mem_store.count() > 10:
                 print(f"  ... and {mem_store.count() - 10} more")
+            print()
+            continue
+        if user_input == "/sessions":
+            from koan.session_control import list_sessions, format_session_list
+            print(format_session_list(list_sessions(cfg.session_dir)))
+            print()
+            continue
+        if user_input == "/playbooks" and pb_store:
+            if pb_store.count() == 0:
+                print("No playbooks learned yet.")
+            else:
+                print(f"Playbooks ({pb_store.count()}):")
+                for pb in pb_store.all():
+                    print(f"  {pb.summary()}")
             print()
             continue
 
@@ -377,7 +393,14 @@ def main():
                 print(f"  {pb.summary()}")
         return
     if cmd == "sessions":
-        print("[sessions]  (Phase 1 — list not yet implemented)")
+        from koan.session_control import list_sessions, format_session_list, export_session
+        rest = positional[1:]
+        if rest and rest[0] == "export" and len(rest) > 1:
+            session_path = cfg.session_dir / f"{rest[1]}.jsonl"
+            print(export_session(session_path))
+        else:
+            sessions = list_sessions(cfg.session_dir)
+            print(format_session_list(sessions))
         return
 
     if positional:
