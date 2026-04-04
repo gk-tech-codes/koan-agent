@@ -6,6 +6,7 @@ max_tool_iterations = 25
 [provider]
 default = "ollama"
 fallback = ""
+routing_strategy = "local_first"
 
 [provider.ollama]
 type = "openai_compat"

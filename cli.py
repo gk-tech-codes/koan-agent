@@ -62,39 +62,51 @@ def _parse_args(argv):
 def _build_provider(cfg):
     from koan.providers.openai_compat import OpenAICompatProvider
 
-    name = cfg.default_provider
-    pcfg = cfg.provider_config(name)
-    ptype = pcfg.get("type", "openai_compat")
+    def _make_single_provider(name, pcfg):
+        ptype = pcfg.get("type", "openai_compat")
+        if ptype == "openai_compat":
+            api_key = pcfg.get("api_key", "")
+            if not api_key and name == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY", "")
+            return OpenAICompatProvider(
+                name=name,
+                endpoint=pcfg.get("endpoint", "http://localhost:11434/v1/chat/completions"),
+                model=pcfg.get("model", "qwen2.5-coder:14b"),
+                api_key=api_key,
+            )
+        elif ptype == "anthropic":
+            api_key = pcfg.get("api_key", os.environ.get("ANTHROPIC_API_KEY", ""))
+            return OpenAICompatProvider(
+                name=name,
+                endpoint=pcfg.get("endpoint", "https://api.anthropic.com/v1/messages"),
+                model=pcfg.get("model", "claude-sonnet-4-20250514"),
+                api_key=api_key,
+            )
+        elif ptype == "bedrock":
+            from koan.providers.bedrock import BedrockProvider
+            return BedrockProvider(
+                name=name,
+                model=pcfg.get("model", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+                region=pcfg.get("region", os.environ.get("AWS_REGION", "us-east-1")),
+                role_arn=pcfg.get("role_arn", os.environ.get("BEDROCK_ROLE_ARN", "")),
+                profile=pcfg.get("profile", os.environ.get("AWS_PROFILE", "")),
+            )
+        raise ValueError(f"Unknown provider type: {ptype}")
 
-    if ptype == "openai_compat":
-        api_key = pcfg.get("api_key", "")
-        if not api_key and name == "openai":
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-        return OpenAICompatProvider(
-            name=name,
-            endpoint=pcfg.get("endpoint", "http://localhost:11434/v1/chat/completions"),
-            model=pcfg.get("model", "qwen2.5-coder:14b"),
-            api_key=api_key,
-        )
-    elif ptype == "anthropic":
-        api_key = pcfg.get("api_key", os.environ.get("ANTHROPIC_API_KEY", ""))
-        return OpenAICompatProvider(
-            name=name,
-            endpoint=pcfg.get("endpoint", "https://api.anthropic.com/v1/messages"),
-            model=pcfg.get("model", "claude-sonnet-4-20250514"),
-            api_key=api_key,
-        )
-    elif ptype == "bedrock":
-        from koan.providers.bedrock import BedrockProvider
-        return BedrockProvider(
-            name=name,
-            model=pcfg.get("model", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-            region=pcfg.get("region", os.environ.get("AWS_REGION", "us-east-1")),
-            role_arn=pcfg.get("role_arn", os.environ.get("BEDROCK_ROLE_ARN", "")),
-            profile=pcfg.get("profile", os.environ.get("AWS_PROFILE", "")),
-        )
+    # Build primary provider
+    primary_name = cfg.default_provider
+    primary = _make_single_provider(primary_name, cfg.provider_config(primary_name))
 
-    raise ValueError(f"Unknown provider type: {ptype}")
+    # Build fallback if configured
+    fallback_name = cfg.fallback_provider
+    if fallback_name and fallback_name != primary_name:
+        from koan.providers.router import ProviderRouter, RoutingStrategy
+        fallback = _make_single_provider(fallback_name, cfg.provider_config(fallback_name))
+        strategy_str = cfg.get("provider", "routing_strategy", default="local_first")
+        strategy = RoutingStrategy(strategy_str)
+        return ProviderRouter(primary, fallback, strategy)
+
+    return primary
 
 
 async def _run_prompt(prompt, cfg, mode):
