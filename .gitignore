@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+
+# Kōan runtime data
+.koan/
+sessions/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# AWS / secrets
+*.pem
+*.key
+credentials
+.aws/
+
+# Test
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Local docs — not for public
+DESIGN.md
+PHASES.md
+THESIS.md
+
+# Agent-generated test files
+snake_ladders*
+racing_game*
+build-agent.sh

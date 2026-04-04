@@ -1,0 +1,65 @@
+[agent]
+name = "koan"
+mode = "session"
+max_tool_iterations = 25
+
+[provider]
+default = "ollama"
+fallback = ""
+
+[provider.ollama]
+type = "openai_compat"
+endpoint = "http://localhost:11434/v1/chat/completions"
+model = "qwen2.5-coder:14b"
+
+[provider.anthropic]
+type = "anthropic"
+endpoint = "https://api.anthropic.com/v1/messages"
+model = "claude-sonnet-4-20250514"
+
+[provider.openai]
+type = "openai_compat"
+endpoint = "https://api.openai.com/v1/chat/completions"
+model = "gpt-4o"
+
+[provider.bedrock]
+type = "bedrock"
+model = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+region = "us-east-1"
+role_arn = ""
+profile = ""
+
+[permissions]
+mode = "workspace_write"
+workspace_root = "auto"
+
+[permissions.rules]
+
+[session]
+directory = "~/.koan/sessions"
+auto_compact = true
+compact_threshold_tokens = 80000
+
+[memory]
+enabled = false
+directory = "~/.koan/memory"
+consolidation_model = "ollama/qwen2.5-coder:7b"
+store_threshold = 0.6
+decay_rate = 0.01
+max_memories = 10000
+max_recall_per_turn = 10
+
+[memory.scoring]
+w_recency = 0.2
+w_relevance = 0.4
+w_importance = 0.3
+w_frequency = 0.1
+
+[hooks]
+before_tool = []
+after_tool = []
+after_session = []
+
+[plugins]
+enabled = []
+directories = ["~/.koan/plugins", ".koan/plugins"]
