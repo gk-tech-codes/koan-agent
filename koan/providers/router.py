@@ -11,7 +11,10 @@ from enum import Enum
 from typing import Any, AsyncIterator
 
 from koan.errors import MalformedToolCallError, ProviderError
+from koan.log import get_logger
 from koan.providers.base import BaseProvider
+
+log = get_logger("router")
 from koan.types import Event, EventType, Message, ToolSchema
 
 
@@ -74,8 +77,9 @@ class ProviderRouter(BaseProvider):
             return
 
         except MalformedToolCallError as exc:
-            # Primary returned bad tool JSON — retry with fallback
             self._primary_failures += 1
+            log.warning("Primary '%s' returned malformed tool JSON, failing over to '%s'",
+                       self._primary.name, self._fallback.name if self._fallback else "none")
             if self._fallback and self._strategy in (
                 RoutingStrategy.LOCAL_FIRST, RoutingStrategy.COST_AWARE
             ):
@@ -86,8 +90,8 @@ class ProviderRouter(BaseProvider):
             raise
 
         except ProviderError as exc:
-            # Primary is down or errored — try fallback
             self._primary_failures += 1
+            log.warning("Primary '%s' failed: %s", self._primary.name, exc)
             if self._fallback and self._strategy in (
                 RoutingStrategy.LOCAL_FIRST, RoutingStrategy.COST_AWARE
             ):

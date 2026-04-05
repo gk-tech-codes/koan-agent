@@ -13,7 +13,10 @@ from typing import Any, AsyncIterator
 import httpx
 
 from koan.errors import MalformedToolCallError, ProviderError
+from koan.log import get_logger
 from koan.providers.base import BaseProvider
+
+log = get_logger("openai_compat")
 from koan.types import (
     Event,
     EventType,
@@ -192,6 +195,7 @@ class OpenAICompatProvider(BaseProvider):
                             )
 
             except httpx.ConnectError as exc:
+                log.error("Cannot connect to %s: %s", self._endpoint, exc)
                 raise ProviderError(f"Cannot connect to {self._endpoint}: {exc}") from exc
 
         # Emit assembled tool calls

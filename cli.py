@@ -370,6 +370,10 @@ def main():
     cfg = load_config(cli_overrides=overrides or None)
     mode = Mode.MEMORY if cfg.memory_enabled else Mode.SESSION
 
+    # Init logging
+    from koan.log import setup_logging
+    setup_logging()
+
     cmd = positional[0] if positional else None
 
     if cmd == "config":
@@ -402,11 +406,6 @@ def main():
             sessions = list_sessions(cfg.session_dir)
             print(format_session_list(sessions))
         return
-
-    if positional:
-        asyncio.run(_run_prompt(" ".join(positional), cfg, mode))
-    else:
-        asyncio.run(_run_repl(cfg, mode))
 
     # Load plugins
     plugin_dirs = cfg.get("plugins", "directories", default=["~/.koan/plugins", ".koan/plugins"])

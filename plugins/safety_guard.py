@@ -1,4 +1,4 @@
-"""Safety guard plugin — blocks dangerous commands."""
+"""Safety guard plugin — blocks dangerous and destructive commands."""
 
 from koan.plugins.hooks import hook
 from koan.types import HookResult
@@ -11,6 +11,11 @@ _BLOCKED_PATTERNS = [
     "> /dev/sda",
     "dd if=/dev/zero",
     ":(){ :|:& };:",
+    "git push",
+    "git commit",
+    "git checkout -f",
+    "git reset --hard",
+    "git clean -fd",
 ]
 
 
@@ -25,6 +30,6 @@ def block_dangerous(**kwargs):
     command = tool_input.get("command", "")
     for pattern in _BLOCKED_PATTERNS:
         if pattern in command:
-            return HookResult.deny(f"Blocked dangerous command: {pattern}")
+            return HookResult.deny(f"Blocked: '{pattern}' — use git manually")
 
     return None

@@ -14,6 +14,10 @@ from typing import Any, Callable, get_type_hints
 
 from koan.types import ToolPermission, ToolResult, ToolSchema
 
+from koan.log import get_logger
+
+log = get_logger("tools")
+
 
 # Python type → JSON schema type
 _TYPE_MAP = {
@@ -83,6 +87,7 @@ class ToolRegistry:
 
     def register(self, tool_def: ToolDef) -> None:
         self._tools[tool_def.name] = tool_def
+        log.debug("Registered tool: %s (%s)", tool_def.name, tool_def.permission.value)
 
     def get(self, name: str) -> ToolDef | None:
         return self._tools.get(name)
@@ -96,6 +101,7 @@ class ToolRegistry:
     async def execute(self, name: str, tool_input: dict[str, Any]) -> ToolResult:
         tool_def = self._tools.get(name)
         if not tool_def:
+            log.error("Unknown tool requested: %s", name)
             return ToolResult(
                 tool_use_id="",
                 output=f"Unknown tool: {name}",
@@ -108,6 +114,7 @@ class ToolRegistry:
                 result = await result
             return ToolResult(tool_use_id="", output=str(result))
         except Exception as exc:
+            log.error("Tool %s execution failed: %s", name, exc)
             return ToolResult(tool_use_id="", output=str(exc), is_error=True)
 
 

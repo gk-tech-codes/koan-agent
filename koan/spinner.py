@@ -43,9 +43,12 @@ class Spinner:
 
     def _spin(self):
         i = 0
+        start = time.time()
         while self._running:
             frame = self._frames[i % len(self._frames)]
-            sys.stderr.write(f"\r{_THINKING_PREFIX}{frame} {self._label}...{_RESET}")
+            elapsed = int(time.time() - start)
+            time_str = f" {elapsed}s" if elapsed >= 3 else ""
+            sys.stderr.write(f"\r{_THINKING_PREFIX}{frame} {self._label}...{time_str}{_RESET}")
             sys.stderr.flush()
             i += 1
             time.sleep(0.12)

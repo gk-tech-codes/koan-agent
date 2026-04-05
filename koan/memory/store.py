@@ -12,6 +12,10 @@ from typing import Any
 
 from koan.types import Memory, MemoryType
 
+from koan.log import get_logger
+
+log = get_logger("memory.store")
+
 
 def _memory_to_dict(m: Memory) -> dict:
     return {
@@ -81,6 +85,7 @@ class MemoryStore:
         """Store a new memory. Returns the memory ID."""
         self._memories[memory.id] = memory
         self._save()
+        log.debug("Stored [%s] %s: %s", memory.type.value, memory.id, memory.content[:60])
         return memory.id
 
     def get(self, memory_id: str) -> Memory | None:
@@ -102,9 +107,12 @@ class MemoryStore:
     def forget(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
         if memory_id in self._memories:
+            content = self._memories[memory_id].content[:60]
             del self._memories[memory_id]
             self._save()
+            log.info("Deleted memory %s: %s", memory_id, content)
             return True
+        log.warning("Forget failed — memory %s not found", memory_id)
         return False
 
     def all(self) -> list[Memory]:

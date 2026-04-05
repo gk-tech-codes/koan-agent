@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from koan.compact import compact_messages, estimate_tokens, should_compact
 from koan.errors import ProviderError
+from koan.log import get_logger
 from koan.plugins.hooks import dispatch as dispatch_hook
+
+log = get_logger("loop")
 from koan.session import Session
 from koan.spinner import Spinner
 from koan.tools.registry import ToolRegistry
@@ -38,6 +42,7 @@ async def run_turn(
     """Run one user turn through the conversation loop."""
 
     session.push_user_text(user_text)
+    log.debug("Turn started: %s", user_text[:100])
 
     sys_msg = Message(
         role=MessageRole.SYSTEM,
@@ -49,6 +54,13 @@ async def run_turn(
 
     while iteration < max_iterations:
         iteration += 1
+
+        # Auto-compact if context is getting too large (claw-code pattern)
+        if should_compact(session.messages):
+            compacted, removed = compact_messages(session.messages)
+            session.messages = compacted
+            log.info("Auto-compacted: removed %d messages", removed)
+
         all_messages = [sys_msg] + session.messages
 
         spinner = Spinner("thinking")
@@ -88,6 +100,7 @@ async def run_turn(
 
         except ProviderError:
             spinner.stop()
+            log.error("Provider error on iteration %d", iteration)
             raise
 
         if first_token:
@@ -114,12 +127,16 @@ async def run_turn(
             usage_data = {}
             if usage:
                 usage_data = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+                log.debug("Turn complete: %d input, %d output tokens", usage.input_tokens, usage.output_tokens)
             await dispatch_hook("on_turn_end", usage=usage_data)
             break
 
+        log.debug("Executing %d tool call(s): %s", len(tool_uses), [t.name for t in tool_uses])
+
         # Execute each tool call
         result_blocks: list[ContentBlock] = []
-        for tu in tool_uses:
+        total_tools = len(tool_uses)
+        for tool_idx, tu in enumerate(tool_uses, 1):
             if permission_check:
                 decision = permission_check(tu.name, tu.input)
                 if decision == Decision.DENY:
@@ -150,7 +167,8 @@ async def run_turn(
             # Apply input modifications from hooks
             effective_input = hook_result.updated_input if hook_result.updated_input else tu.input
 
-            tool_spinner = Spinner(f"{tu.name}", tool=True)
+            label = f"{tu.name} ({tool_idx}/{total_tools})" if total_tools > 1 else tu.name
+            tool_spinner = Spinner(label, tool=True)
             tool_spinner.start()
 
             result = await tools.execute(tu.name, effective_input)
@@ -164,11 +182,19 @@ async def run_turn(
                 output=result.output, is_error=result.is_error,
             )
 
+            log.debug("Tool %s: %s (error=%s, len=%d)", tu.name, result.output[:80], result.is_error, len(result.output))
+
+            # Truncate large tool outputs to prevent context bloat
+            output = result.output
+            if len(output) > 10000:
+                output = output[:10000] + f"\n[truncated — {len(result.output)} chars total]"
+                log.warning("Tool %s output truncated from %d to 10000 chars", tu.name, len(result.output))
+
             result_blocks.append(ContentBlock(
                 type="tool_result",
                 data={
                     "tool_use_id": tu.id,
-                    "output": result.output,
+                    "output": output,
                     "is_error": result.is_error,
                 },
             ))
@@ -181,5 +207,8 @@ async def run_turn(
         if result_blocks:
             tool_result_msg = Message(role=MessageRole.USER, blocks=result_blocks)
             session.push_message(tool_result_msg)
+            # Show continuation indicator — agent is about to think again
+            if on_text:
+                on_text("\n")
 
     return last_assistant_msg

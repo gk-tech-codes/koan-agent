@@ -45,3 +45,13 @@ THESIS.md
 snake_ladders*
 racing_game*
 build-agent.sh
+
+
+# Paper files — private
+paper.tex
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.pdf

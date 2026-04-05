@@ -15,6 +15,10 @@ from typing import Any
 from koan.memory.store import MemoryStore
 from koan.types import Memory, MemoryType, _iso_now
 
+from koan.log import get_logger
+
+log = get_logger("consolidator")
+
 # Patterns that indicate something worth remembering
 _PREFERENCE_SIGNALS = [
     r"i prefer\b", r"i like\b", r"i always\b", r"i never\b",
@@ -136,6 +140,7 @@ def consolidate_session(session_path: Path, store: MemoryStore, threshold: float
     """Run post-session consolidation. Returns stats."""
     candidates = extract_candidates_from_session(session_path)
     session_id = session_path.stem
+    log.info("Consolidating session %s: %d candidates found", session_id, len(candidates))
     now = _iso_now()
 
     stored = 0

@@ -10,6 +10,10 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from koan.log import get_logger
+
+log = get_logger("plugins.loader")
+
 
 def discover_plugins(directories: list[str]) -> list[str]:
     """Import all .py files from plugin directories. Returns loaded plugin names."""
@@ -33,6 +37,7 @@ def discover_plugins(directories: list[str]) -> list[str]:
                     spec.loader.exec_module(module)
                     loaded.append(py_file.stem)
             except Exception as exc:
+                log.error("Plugin %s failed to load: %s", py_file.name, exc)
                 print(f"\033[33m⚠ Plugin {py_file.name} failed to load: {exc}\033[0m")
 
     return loaded

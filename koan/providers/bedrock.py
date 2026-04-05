@@ -1,16 +1,22 @@
 """AWS Bedrock provider — uses boto3 converse_stream API.
 
 Supports Claude models via Bedrock with optional role assumption.
-Streams text deltas in real-time, collects tool calls at block boundaries.
+Runs blocking boto3 calls in a thread to avoid freezing asyncio.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import queue
+import threading
 from typing import Any, AsyncIterator
 
 from koan.errors import ProviderError
+from koan.log import get_logger
 from koan.providers.base import BaseProvider
+
+log = get_logger("bedrock")
 from koan.types import Event, EventType, Message, MessageRole, ToolSchema
 
 
@@ -99,8 +105,34 @@ def _get_bedrock_client(region: str, role_arn: str = "", profile: str = ""):
     return session.client("bedrock-runtime", region_name=region)
 
 
+_SENTINEL = object()
+
+
+def _stream_in_thread(client, kwargs, q: queue.Queue, max_retries: int = 3):
+    """Run converse_stream in a background thread with retry on throttling."""
+    for attempt in range(max_retries + 1):
+        try:
+            log.debug("converse_stream attempt %d, model=%s", attempt + 1, kwargs.get("modelId"))
+            response = client.converse_stream(**kwargs)
+            for event in response.get("stream", []):
+                q.put(event)
+            q.put(_SENTINEL)
+            return
+        except Exception as exc:
+            error_str = str(exc)
+            if "ThrottlingException" in error_str and attempt < max_retries:
+                import time as _time
+                wait = 2 ** (attempt + 1)
+                log.warning("Throttled by Bedrock, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                _time.sleep(wait)
+                continue
+            log.error("Bedrock stream failed: %s", exc)
+            q.put(exc)
+            return
+
+
 class BedrockProvider(BaseProvider):
-    """AWS Bedrock provider using converse_stream for real-time streaming."""
+    """AWS Bedrock provider using converse_stream with non-blocking async."""
 
     def __init__(
         self,
@@ -141,28 +173,38 @@ class BedrockProvider(BaseProvider):
         if tools:
             kwargs["toolConfig"] = {"tools": _format_tools(tools)}
 
-        try:
-            response = client.converse_stream(**kwargs)
-        except Exception as exc:
-            raise ProviderError(f"Bedrock error: {exc}") from exc
+        # Run blocking boto3 stream in a thread so asyncio isn't blocked
+        q: queue.Queue = queue.Queue()
+        thread = threading.Thread(target=_stream_in_thread, args=(client, kwargs, q), daemon=True)
+        thread.start()
 
-        # Track current tool use being assembled
         current_tool_id = ""
         current_tool_name = ""
         current_tool_input = ""
 
-        for event in response.get("stream", []):
+        while True:
+            # Non-blocking poll — yields control back to asyncio between checks
+            try:
+                event = q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.01)
+                continue
 
-            # Text streaming — yields immediately for real-time display
+            # Check for end or error
+            if event is _SENTINEL:
+                break
+            if isinstance(event, Exception):
+                raise ProviderError(f"Bedrock error: {event}") from event
+
+            # Text streaming
             if "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"]["delta"]
                 if "text" in delta:
                     yield Event(type=EventType.TEXT_DELTA, data={"text": delta["text"]})
                 elif "toolUse" in delta:
-                    # Tool input JSON arrives in fragments
                     current_tool_input += delta["toolUse"].get("input", "")
 
-            # Block start — new text or tool_use block beginning
+            # Block start
             elif "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})
                 if "toolUse" in start:
@@ -176,8 +218,10 @@ class BedrockProvider(BaseProvider):
                     try:
                         parsed_input = json.loads(current_tool_input) if current_tool_input else {}
                     except json.JSONDecodeError:
+                        log.warning("Malformed tool JSON from Bedrock: %s", current_tool_input[:200])
                         parsed_input = {"raw": current_tool_input}
 
+                    log.debug("Tool call: %s(%s)", current_tool_name, str(parsed_input)[:100])
                     yield Event(type=EventType.TOOL_USE, data={
                         "id": current_tool_id,
                         "name": current_tool_name,

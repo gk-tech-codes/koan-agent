@@ -14,6 +14,10 @@ from typing import Any
 
 from koan.types import Decision, PermissionLevel, ToolPermission
 
+from koan.log import get_logger
+
+log = get_logger("permissions")
+
 # What permission level each tool permission requires
 _TOOL_LEVEL = {
     ToolPermission.READ: PermissionLevel.READ_ONLY,
@@ -108,16 +112,19 @@ class Permissions:
         # 1. Deny rules — always deny
         for rule in self._deny_rules:
             if _match_rule(rule, tool_name, tool_input):
+                log.info("DENY by rule '%s': %s", rule, tool_name)
                 return Decision.DENY
 
         # 2. Ask rules — always ask
         for rule in self._ask_rules:
             if _match_rule(rule, tool_name, tool_input):
+                log.debug("ASK by rule '%s': %s", rule, tool_name)
                 return Decision.ASK
 
         # 3. Allow rules — always allow
         for rule in self._allow_rules:
             if _match_rule(rule, tool_name, tool_input):
+                log.debug("ALLOW by rule '%s': %s", rule, tool_name)
                 return Decision.ALLOW
 
         # 4. Mode-based check
@@ -134,6 +141,7 @@ class Permissions:
             if self.mode == PermissionLevel.WORKSPACE_WRITE and tool_permission == ToolPermission.WRITE:
                 path = tool_input.get("path", "")
                 if path and not _is_within_workspace(path, self.workspace):
+                    log.info("DENY write outside workspace: %s", path)
                     return Decision.DENY
             return Decision.ALLOW
 

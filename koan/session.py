@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from koan.errors import SessionError
+from koan.log import get_logger
 from koan.types import ContentBlock, Message, MessageRole, TokenUsage
+
+log = get_logger("session")
 
 
 def _iso_now() -> str:
@@ -34,6 +37,7 @@ class Session:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / f"{self.session_id}.jsonl"
         self._cumulative_tokens = 0
+        log.debug("Session created: %s", self.session_id)
 
     @property
     def path(self) -> Path:
@@ -73,6 +77,7 @@ class Session:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError as exc:
+            log.error("Session write failed for %s: %s", self.session_id, exc)
             raise SessionError(f"Failed to write session: {exc}") from exc
 
     @classmethod
@@ -108,5 +113,7 @@ class Session:
                     if usage:
                         session._cumulative_tokens += usage.total
         except (OSError, json.JSONDecodeError) as exc:
+            log.error("Session load failed for %s: %s", path, exc)
             raise SessionError(f"Failed to load session: {exc}") from exc
+        log.debug("Session loaded: %s (%d messages)", session_id, len(session.messages))
         return session

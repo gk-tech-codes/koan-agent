@@ -23,6 +23,10 @@ else:
 
 from koan.errors import ConfigError
 
+from koan.log import get_logger
+
+log = get_logger("config")
+
 _DEFAULTS_FILE = Path(__file__).parent.parent / "config.default.toml"
 _USER_DIR = Path.home() / ".koan"
 _PROJECT_DIR = Path(".koan")
@@ -45,6 +49,7 @@ def _load_toml(path: Path) -> dict[str, Any]:
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
+        log.error("Failed to parse config %s: %s", path, exc)
         raise ConfigError(f"Failed to parse {path}: {exc}") from exc
 
 
@@ -170,4 +175,5 @@ def load_config(
         merged = _deep_merge(merged, cli_overrides)
         sources.append("cli")
 
+    log.debug("Config loaded from %d sources: %s", len(sources), sources)
     return Config(merged, sources)

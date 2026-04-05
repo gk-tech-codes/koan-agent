@@ -14,6 +14,10 @@ from typing import Any
 
 from koan.playbook.store import Playbook, PlaybookStep, PlaybookStore
 
+from koan.log import get_logger
+
+log = get_logger("playbook.extractor")
+
 
 _MIN_CHAIN_LENGTH = 3  # minimum tool calls to form a playbook
 
@@ -147,6 +151,7 @@ def extract_playbooks_from_session(
 
     chains = _extract_tool_chains(messages)
     new_playbooks = []
+    log.debug("Found %d tool chains in session %s", len(chains), session_path.stem)
 
     for chain in chains:
         if not _chain_succeeded(chain):
@@ -187,6 +192,7 @@ def extract_playbooks_from_session(
             "learned_from": [session_path.stem],
         })
         store.store(pb)
+        log.info("Learned playbook '%s' (%d steps) from session %s", pb.name, len(pb.steps), session_path.stem)
         new_playbooks.append(pb)
 
     return new_playbooks

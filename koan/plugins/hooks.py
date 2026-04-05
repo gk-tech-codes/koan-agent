@@ -22,6 +22,10 @@ from typing import Any, Callable
 
 from koan.types import HookResult
 
+from koan.log import get_logger
+
+log = get_logger("plugins.hooks")
+
 # Valid hook event names
 HOOK_EVENTS = frozenset({
     "on_session_start",
@@ -79,12 +83,14 @@ async def dispatch(event: str, **kwargs) -> HookResult:
 
             if isinstance(r, HookResult):
                 if r.denied:
+                    log.info("Hook %s denied by %s: %s", event, handler.__name__, r.messages)
                     return r  # short-circuit on deny
                 result.messages.extend(r.messages)
                 if r.updated_input is not None:
                     result.updated_input = r.updated_input
 
         except Exception as exc:
+            log.error("Hook '%s' error in %s: %s", event, handler.__name__, exc)
             result.messages.append(f"Hook error ({handler.__name__}): {exc}")
 
     return result
