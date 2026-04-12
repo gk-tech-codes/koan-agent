@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any
 
 
+def cleanup_old_sessions(session_dir: Path, keep_days: int = 30) -> int:
+    """Delete session files older than keep_days. Returns count deleted."""
+    import time
+    cutoff = time.time() - (keep_days * 86400)
+    deleted = 0
+    session_dir.mkdir(parents=True, exist_ok=True)
+    for f in session_dir.glob("*.jsonl"):
+        if f.stat().st_mtime < cutoff:
+            f.unlink()
+            deleted += 1
+    return deleted
+
+
 def list_sessions(session_dir: Path, limit: int = 20) -> list[dict]:
     """List recent sessions with metadata."""
     session_dir.mkdir(parents=True, exist_ok=True)

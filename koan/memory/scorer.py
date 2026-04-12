@@ -22,7 +22,7 @@ def _hours_since(iso_timestamp: str) -> float:
         t = time.strptime(iso_timestamp[:19], "%Y-%m-%dT%H:%M:%S")
         then = time.mktime(t)
         return max(0.0, (time.time() - then) / 3600.0)
-    except Exception:
+    except (ValueError, OverflowError):
         return 9999.0
 
 

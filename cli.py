@@ -23,7 +23,7 @@ def _print_config(cfg):
 
 
 def _parse_args(argv):
-    flags = {"memory": False, "no_memory": False, "provider": None, "permission_mode": None}
+    flags = {"memory": False, "no_memory": False, "provider": None, "permission_mode": None, "server": None, "client": None}
     positional = []
     i = 0
     while i < len(argv):
@@ -34,14 +34,16 @@ def _parse_args(argv):
         elif arg in ("--help", "-h"):
             print(f"koan {__version__} — A personal AI agent that learns your workflows.\n")
             print("Usage:")
-            print("  koan                          Interactive REPL")
-            print('  koan "your prompt here"       Single prompt')
-            print("  koan --memory                 Enable memory mode")
-            print("  koan --provider bedrock       Override provider")
-            print("  koan config                   Show configuration")
-            print("  koan memory                   Browse personal DB")
-            print("  koan playbooks                List learned playbooks")
-            print("  koan sessions                 List past sessions")
+            print("  koan                                    Interactive REPL")
+            print('  koan "your prompt here"                 Single prompt')
+            print("  koan --memory                           Enable memory mode")
+            print("  koan --provider bedrock                 Override provider")
+            print("  koan --server http://host:8000          Connect to enterprise server")
+            print("  koan --server http://host:8000 --client name")
+            print("  koan config                             Show configuration")
+            print("  koan memory                             Browse personal DB")
+            print("  koan playbooks                          List learned playbooks")
+            print("  koan sessions                           List past sessions")
             sys.exit(0)
         elif arg == "--memory":
             flags["memory"] = True
@@ -50,6 +52,12 @@ def _parse_args(argv):
         elif arg == "--provider" and i + 1 < len(argv):
             i += 1
             flags["provider"] = argv[i]
+        elif arg == "--server" and i + 1 < len(argv):
+            i += 1
+            flags["server"] = argv[i]
+        elif arg == "--client" and i + 1 < len(argv):
+            i += 1
+            flags["client"] = argv[i]
         elif arg == "--permission-mode" and i + 1 < len(argv):
             i += 1
             flags["permission_mode"] = argv[i]
@@ -59,7 +67,11 @@ def _parse_args(argv):
     return flags, positional
 
 
-def _build_provider(cfg):
+def _build_provider(cfg, server_url=None, client_id=None):
+    if server_url:
+        from koan.providers.server import ServerProvider
+        return ServerProvider(url=server_url, client_id=client_id or "default")
+
     from koan.providers.openai_compat import OpenAICompatProvider
 
     def _make_single_provider(name, pcfg):
@@ -109,7 +121,7 @@ def _build_provider(cfg):
     return primary
 
 
-async def _run_prompt(prompt, cfg, mode):
+async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None):
     from koan.loop import run_turn
     from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
@@ -120,7 +132,7 @@ async def _run_prompt(prompt, cfg, mode):
 
     discover_tools()
     tools = get_registry()
-    provider = _build_provider(cfg)
+    provider = _build_provider(cfg, server_url, client_id)
     session = Session(cfg.session_dir)
     renderer = Renderer()
     perms = Permissions(
@@ -189,6 +201,8 @@ async def _run_prompt(prompt, cfg, mode):
             parts.append(f"~{stats['updated']} updated")
         if stats["deleted"]:
             parts.append(f"-{stats['deleted']} removed")
+        if stats.get("deduped"):
+            parts.append(f"⊕{stats['deduped']} merged")
         if stats.get("episode"):
             parts.append("episode saved")
         if stats.get("playbooks_learned"):
@@ -199,7 +213,7 @@ async def _run_prompt(prompt, cfg, mode):
     print(f"\n[session: {session.session_id}]")
 
 
-async def _run_repl(cfg, mode):
+async def _run_repl(cfg, mode, server_url=None, client_id=None):
     from koan.loop import run_turn
     from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
@@ -210,7 +224,7 @@ async def _run_repl(cfg, mode):
 
     discover_tools()
     tools = get_registry()
-    provider = _build_provider(cfg)
+    provider = _build_provider(cfg, server_url, client_id)
     session = Session(cfg.session_dir)
     renderer = Renderer()
     perms = Permissions(
@@ -238,7 +252,10 @@ async def _run_repl(cfg, mode):
         return perms.check_with_prompt(name, inp, tp)
 
     mem_label = f" | {mem_store.count()} memories" if mem_store else ""
-    print(f"Kōan v{__version__} — {mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}{mem_label}")
+    if server_url:
+        print(f"Kōan v{__version__} — server mode | {server_url} | client: {client_id or 'default'}{mem_label}")
+    else:
+        print(f"Kōan v{__version__} — {mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}{mem_label}")
     print("Type /help for commands, /quit to exit.\n")
 
     while True:
@@ -341,6 +358,8 @@ async def _run_repl(cfg, mode):
             parts.append(f"~{stats['updated']} updated")
         if stats["deleted"]:
             parts.append(f"-{stats['deleted']} removed")
+        if stats.get("deduped"):
+            parts.append(f"⊕{stats['deduped']} merged")
         if stats.get("episode"):
             parts.append("episode saved")
         if stats.get("playbooks_learned"):
@@ -373,6 +392,13 @@ def main():
     # Init logging
     from koan.log import setup_logging
     setup_logging()
+
+    # Cleanup old sessions (>30 days)
+    from koan.session_control import cleanup_old_sessions
+    cleaned = cleanup_old_sessions(cfg.session_dir)
+    if cleaned:
+        from koan.log import get_logger
+        get_logger("cli").info("Cleaned %d old sessions", cleaned)
 
     cmd = positional[0] if positional else None
 
@@ -416,9 +442,9 @@ def main():
             print(f"\033[90m◇ Plugins: {', '.join(loaded)}\033[0m")
 
     if positional:
-        asyncio.run(_run_prompt(" ".join(positional), cfg, mode))
+        asyncio.run(_run_prompt(" ".join(positional), cfg, mode, flags["server"], flags["client"]))
     else:
-        asyncio.run(_run_repl(cfg, mode))
+        asyncio.run(_run_repl(cfg, mode, flags["server"], flags["client"]))
 
 
 if __name__ == "__main__":

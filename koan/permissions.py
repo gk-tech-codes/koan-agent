@@ -43,7 +43,7 @@ def _detect_workspace_root() -> Path:
         )
         if result.returncode == 0:
             return Path(result.stdout.strip())
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return Path.cwd()
 
@@ -54,7 +54,7 @@ def _is_within_workspace(path_str: str, workspace: Path) -> bool:
         target = Path(path_str).expanduser().resolve()
         workspace = workspace.resolve()
         return str(target).startswith(str(workspace))
-    except Exception:
+    except (OSError, ValueError):
         return False
 
 

@@ -192,6 +192,12 @@ def consolidate_session(session_path: Path, store: MemoryStore, threshold: float
                 store.update(m.id, confidence=new_conf)
                 decayed += 1
 
+    # Deduplicate — merge similar memories
+    deduped = store.deduplicate(threshold=0.6)
+
+    log.info("Consolidation complete: %d stored, %d updated, %d discarded, %d decayed, %d deleted, %d deduped",
+             stored, updated, discarded, decayed, deleted, deduped)
+
     return {
         "candidates": len(candidates),
         "stored": stored,
@@ -199,6 +205,7 @@ def consolidate_session(session_path: Path, store: MemoryStore, threshold: float
         "discarded": discarded,
         "decayed": decayed,
         "deleted": deleted,
+        "deduped": deduped,
     }
 
 

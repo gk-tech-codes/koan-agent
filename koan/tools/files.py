@@ -40,6 +40,22 @@ def write_file(path: str, content: str) -> str:
     return f"Wrote {len(content)} bytes to {path}"
 
 
+@tool(name="edit_file", description="Make a surgical edit to a file using search and replace", permission="write")
+def edit_file(path: str, old_str: str, new_str: str) -> str:
+    p = Path(path).expanduser().resolve()
+    if not p.is_file():
+        raise FileNotFoundError(f"File not found: {path}")
+    content = p.read_text(encoding="utf-8")
+    count = content.count(old_str)
+    if count == 0:
+        raise ValueError(f"old_str not found in {path}")
+    if count > 1:
+        raise ValueError(f"old_str matches {count} times in {path} — must be unique")
+    new_content = content.replace(old_str, new_str, 1)
+    p.write_text(new_content, encoding="utf-8")
+    return f"Edited {path}: replaced {len(old_str)} chars with {len(new_str)} chars"
+
+
 @tool(name="glob_search", description="Find files matching a glob pattern", permission="read")
 def glob_search(pattern: str, path: str = ".") -> str:
     root = Path(path).expanduser().resolve()

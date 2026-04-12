@@ -82,7 +82,17 @@ class MemoryStore:
                 f.write(json.dumps(_memory_to_dict(m), ensure_ascii=False) + "\n")
 
     def store(self, memory: Memory) -> str:
-        """Store a new memory. Returns the memory ID."""
+        """Store a new memory. Deduplicates against existing content."""
+        # Check for duplicate or near-duplicate content
+        existing = self.find_similar(memory.content, threshold=0.8)
+        if existing:
+            # Strengthen existing instead of creating duplicate
+            from koan.types import _iso_now
+            new_conf = min(1.0, existing.confidence + 0.1)
+            self.update(existing.id, confidence=new_conf, updated_at=_iso_now())
+            log.debug("Deduplicated — strengthened existing %s instead of storing new", existing.id)
+            return existing.id
+
         self._memories[memory.id] = memory
         self._save()
         log.debug("Stored [%s] %s: %s", memory.type.value, memory.id, memory.content[:60])
@@ -150,3 +160,48 @@ class MemoryStore:
 
     def by_type(self, memory_type: MemoryType) -> list[Memory]:
         return [m for m in self._memories.values() if m.type == memory_type]
+
+    def deduplicate(self, threshold: float = 0.6) -> int:
+        """Merge duplicate memories. Keeps highest-confidence version, boosts it.
+        Returns number of duplicates removed."""
+        ids = list(self._memories.keys())
+        to_remove = set()
+        merged = 0
+
+        for i, id_a in enumerate(ids):
+            if id_a in to_remove:
+                continue
+            mem_a = self._memories[id_a]
+            words_a = set(mem_a.content.lower().split())
+
+            for id_b in ids[i + 1:]:
+                if id_b in to_remove:
+                    continue
+                mem_b = self._memories[id_b]
+                words_b = set(mem_b.content.lower().split())
+
+                if not words_a or not words_b:
+                    continue
+                overlap = len(words_a & words_b) / min(len(words_a), len(words_b))
+
+                if overlap >= threshold:
+                    # Keep the one with higher confidence, boost it
+                    if mem_a.confidence >= mem_b.confidence:
+                        mem_a.confidence = min(1.0, mem_a.confidence + 0.1)
+                        mem_a.recall_count += mem_b.recall_count
+                        to_remove.add(id_b)
+                    else:
+                        mem_b.confidence = min(1.0, mem_b.confidence + 0.1)
+                        mem_b.recall_count += mem_a.recall_count
+                        to_remove.add(id_a)
+                        break  # id_a is removed, stop comparing it
+                    merged += 1
+
+        for rid in to_remove:
+            del self._memories[rid]
+
+        if merged > 0:
+            self._save()
+            log.info("Deduplicated: merged %d memories, %d remaining", merged, len(self._memories))
+
+        return merged
