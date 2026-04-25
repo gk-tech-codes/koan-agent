@@ -34,6 +34,8 @@ def read_file(path: str, start_line: int = 1, end_line: int = -1) -> str:
 
 @tool(name="write_file", description="Write content to a file", permission="write")
 def write_file(path: str, content: str) -> str:
+    from koan.undo import undo_manager
+    undo_manager.backup(path)
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
@@ -42,6 +44,8 @@ def write_file(path: str, content: str) -> str:
 
 @tool(name="edit_file", description="Make a surgical edit to a file using search and replace", permission="write")
 def edit_file(path: str, old_str: str, new_str: str) -> str:
+    from koan.undo import undo_manager
+    undo_manager.backup(path)
     p = Path(path).expanduser().resolve()
     if not p.is_file():
         raise FileNotFoundError(f"File not found: {path}")

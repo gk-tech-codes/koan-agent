@@ -23,7 +23,7 @@ def _print_config(cfg):
 
 
 def _parse_args(argv):
-    flags = {"memory": False, "no_memory": False, "provider": None, "permission_mode": None, "server": None, "client": None}
+    flags = {"memory": False, "no_memory": False, "provider": None, "permission_mode": None, "server": None, "client": None, "undo": False, "explain": False, "review": False}
     positional = []
     i = 0
     while i < len(argv):
@@ -40,6 +40,9 @@ def _parse_args(argv):
             print("  koan --provider bedrock                 Override provider")
             print("  koan --server http://host:8000          Connect to enterprise server")
             print("  koan --server http://host:8000 --client name")
+            print("  koan --undo                             Enable undo for file changes")
+            print("  koan --explain                          Show reasoning after responses")
+            print("  koan --review                           Peer review mode (coder + critic)")
             print("  koan config                             Show configuration")
             print("  koan memory                             Browse personal DB")
             print("  koan playbooks                          List learned playbooks")
@@ -49,6 +52,12 @@ def _parse_args(argv):
             flags["memory"] = True
         elif arg == "--no-memory":
             flags["no_memory"] = True
+        elif arg == "--undo":
+            flags["undo"] = True
+        elif arg == "--explain":
+            flags["explain"] = True
+        elif arg == "--review":
+            flags["review"] = True
         elif arg == "--provider" and i + 1 < len(argv):
             i += 1
             flags["provider"] = argv[i]
@@ -121,7 +130,7 @@ def _build_provider(cfg, server_url=None, client_id=None):
     return primary
 
 
-async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None):
+async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None, review=False):
     from koan.loop import run_turn
     from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
@@ -172,7 +181,14 @@ async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None):
         tp = tool_def.permission if tool_def else None
         return perms.check_with_prompt(name, inp, tp)
 
-    print(f"[{mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}]\n")
+    mode_label = f"server → {server_url}" if server_url else f"{cfg.default_provider} | {cfg.permission_mode}"
+    review_label = " | \033[33mreview\033[0m" if review else ""
+    print(f"[{mode.value} mode | {mode_label}{review_label}]\n")
+
+    collected_text = []
+    def on_text_collect(text):
+        collected_text.append(text)
+        renderer.write(text)
 
     try:
         await run_turn(
@@ -183,8 +199,21 @@ async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None):
             system_prompt=system_prompt,
             max_iterations=cfg.max_tool_iterations,
             permission_check=perm_check,
-            on_text=renderer.write,
+            on_text=on_text_collect,
         )
+
+        # Peer review if enabled
+        if review and collected_text:
+            from koan.review import PeerReview
+            reviewer = PeerReview(provider, max_rounds=3)
+            initial = "".join(collected_text)
+            result = await reviewer.run(
+                prompt, initial, system_prompt,
+                on_status=lambda s: sys.stdout.write(s) or sys.stdout.flush(),
+            )
+            if result["rounds"] > 0:
+                renderer.write("\n" + result["final_response"])
+
     except Exception as exc:
         print(f"\nError: {exc}")
 
@@ -213,7 +242,7 @@ async def _run_prompt(prompt, cfg, mode, server_url=None, client_id=None):
     print(f"\n[session: {session.session_id}]")
 
 
-async def _run_repl(cfg, mode, server_url=None, client_id=None):
+async def _run_repl(cfg, mode, server_url=None, client_id=None, review=False):
     from koan.loop import run_turn
     from koan.permissions import Permissions
     from koan.prompt import build_system_prompt
@@ -255,7 +284,20 @@ async def _run_repl(cfg, mode, server_url=None, client_id=None):
     if server_url:
         print(f"Kōan v{__version__} — server mode | {server_url} | client: {client_id or 'default'}{mem_label}")
     else:
-        print(f"Kōan v{__version__} — {mode.value} mode | {cfg.default_provider} | {cfg.permission_mode}{mem_label}")
+        from koan.compact import estimate_tokens, DEFAULT_COMPACT_THRESHOLD
+        from koan.ui import banner, tip
+        est = estimate_tokens(session.messages)
+        pct = min(100, int(est / DEFAULT_COMPACT_THRESHOLD * 100))
+        print(banner(
+            mode=mode.value,
+            provider=cfg.default_provider,
+            memory_count=mem_store.count() if mem_store else 0,
+            playbook_count=pb_store.count() if pb_store else 0,
+            episode_count=ep_store.count() if ep_store else 0,
+            review=review,
+        ))
+        print(tip())
+        print()
     print("Type /help for commands, /quit to exit.\n")
 
     while True:
@@ -272,6 +314,9 @@ async def _run_repl(cfg, mode, server_url=None, client_id=None):
             print("  /config    Show config")
             print("  /mode      Show current mode")
             print("  /session   Show session info")
+            print("  /context   Show context window usage")
+            print("  /undo      Undo last file change (--undo)")
+            print("  /why       Show reasoning (--explain)")
             print("  /sessions  List past sessions")
             print("  /memory    Show memories" if mem_store else "")
             print("  /playbooks Show learned playbooks" if pb_store else "")
@@ -287,6 +332,45 @@ async def _run_repl(cfg, mode, server_url=None, client_id=None):
             print(f"Session: {session.session_id}")
             print(f"Messages: {len(session.messages)}")
             print(f"Tokens: ~{session.cumulative_tokens}")
+            continue
+        if user_input == "/context":
+            from koan.compact import estimate_tokens, DEFAULT_COMPACT_THRESHOLD
+            est = estimate_tokens(session.messages)
+            pct = min(100, int(est / DEFAULT_COMPACT_THRESHOLD * 100))
+            bar_len = 30
+            filled = int(bar_len * pct / 100)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            color = "\033[32m" if pct < 60 else "\033[33m" if pct < 80 else "\033[31m"
+            print(f"  Context: {color}{bar} {pct}%\033[0m ({est:,} / {DEFAULT_COMPACT_THRESHOLD:,} tokens)")
+            print(f"  Messages: {len(session.messages)}")
+            if pct >= 80:
+                print(f"  \033[33m⚠ High usage — auto-compaction will trigger soon\033[0m")
+            print()
+            continue
+        if user_input == "/undo":
+            from koan.undo import undo_manager
+            result = undo_manager.undo()
+            print(f"  {result}")
+            print()
+            continue
+        if user_input == "/undo history":
+            from koan.undo import undo_manager
+            history = undo_manager.history()
+            if not history:
+                print("  No undo history.")
+            else:
+                for h in history[:10]:
+                    print(f"  {h['action']:10} {h['path']:30} {h['ago']}")
+            print()
+            continue
+        if user_input == "/why":
+            from koan.explain import explain_tracker
+            explanation = explain_tracker.format_explanation()
+            if explanation:
+                print(explanation)
+            else:
+                print("  \033[90mNo reasoning data. Use --explain flag to enable.\033[0m")
+            print()
             continue
         if user_input == "/memory" and mem_store:
             print(f"Memories: {mem_store.count()}")
@@ -319,6 +403,15 @@ async def _run_repl(cfg, mode, server_url=None, client_id=None):
             from koan.playbook.matcher import format_playbooks_for_prompt
             memories = recall(mem_store, user_input, limit=cfg.get("memory", "max_recall_per_turn", default=10))
             memory_context = format_memories_for_prompt(memories)
+
+            # Show recall visual
+            if memories:
+                from koan.ui import memory_recall_box
+                mem_dicts = [{"type": m.type.value, "content": m.content} for m in memories]
+                ep_summaries = [e.summary for e in ep_store.recent(2)] if ep_store else []
+                pb_names = [p.name for p in pb_store.all()[:2]] if pb_store else []
+                print(memory_recall_box(mem_dicts, ep_summaries, pb_names))
+
             if ep_store:
                 ep_context = format_episodes_for_prompt(ep_store.recent(3))
                 if ep_context:
@@ -345,6 +438,20 @@ async def _run_repl(cfg, mode, server_url=None, client_id=None):
         except Exception as exc:
             print(f"\nError: {exc}")
         renderer.newline()
+
+        # Status bar after each turn
+        from koan.compact import estimate_tokens, DEFAULT_COMPACT_THRESHOLD
+        from koan.ui import status_bar
+        est = estimate_tokens(session.messages)
+        pct = min(100, int(est / DEFAULT_COMPACT_THRESHOLD * 100))
+        cost = session.cumulative_tokens * 0.000003 + session.cumulative_tokens * 0.000015  # rough estimate
+        print(status_bar(
+            tokens=session.cumulative_tokens,
+            context_pct=pct,
+            tools_used=sum(1 for m in session.messages for b in m.blocks if b.type == "tool_use"),
+            memory_on=mem_store is not None,
+            cost=cost,
+        ))
         print()
 
     # Post-session consolidation
@@ -392,6 +499,14 @@ def main():
     # Init logging
     from koan.log import setup_logging
     setup_logging()
+
+    # Init optional features
+    if flags["undo"]:
+        from koan.undo import undo_manager
+        undo_manager.__init__(enabled=True)
+    if flags["explain"]:
+        from koan.explain import explain_tracker
+        explain_tracker.__init__(enabled=True)
 
     # Cleanup old sessions (>30 days)
     from koan.session_control import cleanup_old_sessions
@@ -442,9 +557,9 @@ def main():
             print(f"\033[90m◇ Plugins: {', '.join(loaded)}\033[0m")
 
     if positional:
-        asyncio.run(_run_prompt(" ".join(positional), cfg, mode, flags["server"], flags["client"]))
+        asyncio.run(_run_prompt(" ".join(positional), cfg, mode, flags["server"], flags["client"], flags["review"]))
     else:
-        asyncio.run(_run_repl(cfg, mode, flags["server"], flags["client"]))
+        asyncio.run(_run_repl(cfg, mode, flags["server"], flags["client"], flags["review"]))
 
 
 if __name__ == "__main__":

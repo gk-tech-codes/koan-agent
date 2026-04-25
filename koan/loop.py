@@ -129,6 +129,17 @@ async def run_turn(
                 usage_data = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
                 log.debug("Turn complete: %d input, %d output tokens", usage.input_tokens, usage.output_tokens)
             await dispatch_hook("on_turn_end", usage=usage_data)
+
+            # Show context usage indicator
+            from koan.compact import estimate_tokens, DEFAULT_COMPACT_THRESHOLD
+            est = estimate_tokens(session.messages)
+            pct = min(100, int(est / DEFAULT_COMPACT_THRESHOLD * 100))
+            if pct >= 60 and on_text:
+                color = "\033[33m" if pct < 80 else "\033[31m"  # yellow or red
+                on_text(f"\n{color}◈ Context: {pct}% ({est:,} / {DEFAULT_COMPACT_THRESHOLD:,} tokens)\033[0m")
+                if pct >= 80:
+                    on_text(f"\n\033[90m  Auto-compaction will trigger soon to free context.\033[0m")
+
             break
 
         log.debug("Executing %d tool call(s): %s", len(tool_uses), [t.name for t in tool_uses])
@@ -200,9 +211,34 @@ async def run_turn(
             ))
 
             status = "✗" if result.is_error else "✓"
-            preview = result.output[:100].replace("\n", " ")
             if on_text:
-                on_text(f"\n  {status} {tu.name}: {preview}\n")
+                from koan.diff import format_bash_result, format_file_result, compute_diff
+                if tu.name == "bash":
+                    cmd = effective_input.get("command", "")
+                    formatted = format_bash_result(cmd, result.output, result.is_error)
+                    on_text(f"\n  {formatted}\n")
+                elif tu.name in ("write_file", "edit_file"):
+                    path = effective_input.get("path", "")
+                    content = effective_input.get("content", "")
+                    new_str = effective_input.get("new_str", "")
+                    # For write_file, diff is new file preview; for edit_file, show the change
+                    if tu.name == "write_file" and content:
+                        from koan.diff import compute_diff
+                        diff = compute_diff(path, content, old_content="")
+                    elif tu.name == "edit_file":
+                        old = effective_input.get("old_str", "")
+                        diff = f"\033[90m  ┌─ edit ──────────────────────────────\033[0m\n\033[90m  │\033[0m \033[31m- {old[:70]}\033[0m\n\033[90m  │\033[0m \033[32m+ {new_str[:70]}\033[0m\n\033[90m  └──────────────────────────────────────\033[0m" if old else ""
+                    else:
+                        diff = ""
+                    formatted = format_file_result(tu.name, path, result.output, diff)
+                    on_text(f"\n  {formatted}\n")
+                elif tu.name in ("read_file", "glob_search", "grep_search"):
+                    path = effective_input.get("path", effective_input.get("pattern", ""))
+                    formatted = format_file_result(tu.name, path, result.output)
+                    on_text(f"\n  {formatted}\n")
+                else:
+                    preview = result.output[:100].replace("\n", " ")
+                    on_text(f"\n  {status} \033[36m{tu.name}\033[0m: {preview}\n")
 
         if result_blocks:
             tool_result_msg = Message(role=MessageRole.USER, blocks=result_blocks)
