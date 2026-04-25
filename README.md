@@ -2,118 +2,151 @@
 
 A personal AI agent that learns your workflows and gets better every session.
 
-## What is this
+## What Makes Kōan Different
 
-Kōan is a CLI-based AI coding agent with a unique three-layer memory system:
-- **Semantic memory** — learns your preferences, facts, and coding patterns
-- **Episodic memory** — remembers what happened in past sessions
-- **Procedural memory** — learns multi-step workflows as reusable playbooks
-
-The agent runs locally, stores everything as inspectable JSONL files, and works with local LLMs (Ollama) or cloud providers (AWS Bedrock, OpenAI, Anthropic).
+- **Three-layer memory** — learns your preferences, remembers past sessions, and extracts reusable workflow playbooks
+- **Peer review mode** — two agents: one codes, one critiques. Code survives adversarial review before you see it
+- **Deferred consolidation** — memory extraction runs after the session, zero overhead during your work
+- **Local-first** — your data stays on your machine. No cloud storage of personal knowledge
+- **Undo system** — every file change is backed up. One command to revert
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 pip install httpx boto3
 
-# Run with AWS Bedrock
-export BEDROCK_ROLE_ARN="your-role-arn"
-python cli.py --provider bedrock "list files in this directory"
-
-# Run with Ollama (local, free)
-brew install ollama && ollama pull qwen2.5-coder:14b
-python cli.py "list files in this directory"
-
-# Interactive REPL
+# With AWS Bedrock
 python cli.py --provider bedrock
-```
 
-## Usage
-
-```bash
-# Single prompt
-python cli.py "your prompt here"
-
-# Interactive REPL
+# With Ollama (local, free)
+brew install ollama && ollama pull qwen2.5-coder:14b
 python cli.py
 
-# Override provider
-python cli.py --provider bedrock
-python cli.py --provider ollama
-python cli.py --provider openai
+# Memory mode — agent learns about you
+python cli.py --memory --provider bedrock
 
-# Memory mode (Phase 3+)
-python cli.py --memory "your prompt"
+# Peer review mode — adversarial code generation
+python cli.py --review --provider bedrock
 
-# Subcommands
-python cli.py config              # Show configuration
-python cli.py memory              # Browse personal DB (Phase 3+)
-python cli.py playbooks           # List learned playbooks (Phase 5+)
-python cli.py sessions            # List past sessions
+# All features
+python cli.py --memory --review --undo --explain --provider bedrock
 ```
+
+## Features
+
+### Core
+- Streaming conversation loop with tool execution
+- 5 built-in tools: bash, read_file, write_file, edit_file, glob_search, grep_search
+- Multi-provider: Ollama, AWS Bedrock, OpenAI, any OpenAI-compatible endpoint
+- Provider router with automatic fallback
+- Configurable permission system (read_only, workspace_write, full_access)
+- Plugin system with 8 hook points
+- Auto-compaction when context exceeds threshold
+
+### Memory (--memory)
+- **Semantic** — preferences, facts, lessons, instructions
+- **Episodic** — compressed session summaries
+- **Procedural** — learned multi-step workflow playbooks
+- Post-session consolidation with importance scoring
+- Memory deduplication and time-based decay
+
+### Peer Review (--review)
+- GAN-style adversarial code generation
+- Coder agent writes, Critic agent reviews
+- Iterates until Critic approves or max rounds reached
+- Catches security issues, missing error handling, code quality problems
+
+### UX
+- Branded terminal UI with session stats
+- Colored markdown rendering (headers, code blocks, lists, inline code)
+- Diff preview before file writes
+- Compact tool output (line counts, file sizes)
+- Context window usage indicator
+- Status bar with token count and cost estimate
+- Memory recall visualization
+
+### Optional Flags
+- `--undo` — backup files before changes, `/undo` to revert
+- `--explain` — track reasoning, `/why` to see which memories influenced decisions
+- `--review` — peer review mode
+- `--memory` — enable three-layer memory
+- `--server URL` — connect to enterprise server instead of LLM directly
 
 ## REPL Commands
 
 ```
-/help      Show commands
-/config    Show current configuration
-/mode      Show current mode
-/session   Show session info
-/quit      Exit
+/help       Show commands
+/config     Show configuration
+/mode       Show current mode
+/session    Show session info
+/context    Show context window usage with progress bar
+/memory     Browse stored memories
+/playbooks  Show learned playbooks
+/sessions   List past sessions
+/undo       Revert last file change (--undo)
+/why        Show reasoning (--explain)
+/quit       Exit
 ```
 
 ## Configuration
 
-Default config is in `config.default.toml`. Override with:
-- `~/.koan/config.toml` — user-level config
-- `.koan/config.toml` — project-level config
-- Environment variables (`BEDROCK_ROLE_ARN`, `OPENAI_API_KEY`, etc.)
-- CLI flags (`--provider`, `--memory`, `--permission-mode`)
-
-## Providers
-
-| Provider | Type | Config key |
-|---|---|---|
-| Ollama | Local (free) | `ollama` |
-| AWS Bedrock | Cloud | `bedrock` |
-| OpenAI | Cloud | `openai` |
-| Anthropic | Cloud | `anthropic` |
-
-## Tools
-
-Built-in tools available to the agent:
-- `bash` — execute shell commands
-- `read_file` — read file contents
-- `write_file` — write/create files
-- `glob_search` — find files by pattern
-- `grep_search` — search file contents
+Default config in `config.default.toml`. Override with:
+- `~/.koan/config.toml` — user-level
+- `.koan/config.toml` — project-level
+- Environment variables
+- CLI flags
 
 ## Project Structure
 
 ```
 koan/
-├── __init__.py          # Version
-├── types.py             # Protocols, enums, dataclasses
-├── errors.py            # Error hierarchy
-├── config.py            # TOML config loader (3-layer merge)
 ├── loop.py              # Core conversation loop
 ├── session.py           # JSONL session persistence
+├── compact.py           # Auto-compaction
+├── config.py            # 5-layer config merge
+├── types.py             # Protocols, enums, dataclasses
+├── permissions.py       # Permission system
+├── render.py            # Colored terminal output
+├── ui.py                # Banner, status bar, recall box
+├── diff.py              # Diff preview for file changes
+├── review.py            # GAN-style peer review
+├── undo.py              # File change undo system
+├── explain.py           # Reasoning tracker
 ├── prompt.py            # System prompt builder
-├── render.py            # Terminal output rendering
-├── spinner.py           # Thinking/tool spinners
+├── spinner.py           # Thinking indicators
+├── log.py               # Structured logging
+├── errors.py            # Error hierarchy
+├── memory/
+│   ├── store.py         # JSONL memory database
+│   ├── semantic.py      # Preferences, facts, lessons
+│   ├── episodic.py      # Session summaries
+│   ├── consolidator.py  # Post-session extraction
+│   ├── scorer.py        # Importance scoring
+│   ├── recall.py        # Memory retrieval
+│   └── decay.py         # Confidence decay
+├── playbook/
+│   ├── store.py         # Playbook storage
+│   ├── extractor.py     # Session → playbook extraction
+│   └── matcher.py       # Intent → playbook matching
 ├── providers/
 │   ├── base.py          # Provider interface
 │   ├── openai_compat.py # Ollama / OpenAI / vLLM
-│   └── bedrock.py       # AWS Bedrock
+│   ├── bedrock.py       # AWS Bedrock
+│   ├── router.py        # Multi-provider fallback
+│   └── server.py        # Enterprise server mode
 ├── tools/
-│   ├── registry.py      # @tool decorator + auto-discovery
+│   ├── registry.py      # @tool decorator + auto-schema
 │   ├── bash.py          # Shell execution
-│   └── files.py         # File operations
-├── memory/              # Phase 3+
-├── playbook/            # Phase 5+
-└── plugins/             # Phase 6+
+│   ├── files.py         # File operations + edit
+│   └── memory_tools.py  # Memory recall/store/forget
+└── plugins/
+    ├── hooks.py         # @hook decorator + dispatch
+    └── loader.py        # Plugin auto-discovery
 ```
+
+## Research
+
+Published paper: [Kōan: Deferred Consolidation and Tripartite Memory for Self-Improving Personal CLI Agents](https://www.researchgate.net/publication/403911716)
 
 ## License
 
