@@ -529,13 +529,70 @@ def main():
         return
     if cmd == "playbooks":
         from koan.playbook.store import PlaybookStore
+        from koan.playbook.marketplace import PlaybookMarketplace
         pb_store = PlaybookStore(cfg.memory_dir)
-        if pb_store.count() == 0:
-            print("No playbooks learned yet. Use --memory mode to build up workflows.")
+        marketplace = PlaybookMarketplace(pb_store)
+        rest = positional[1:]
+        action = rest[0] if rest else "list"
+
+        if action == "install" and len(rest) > 1:
+            name = rest[1]
+            print(f"  Installing playbook '{name}'...")
+            err = marketplace.install(name)
+            if err:
+                print(f"  \033[31m✗\033[0m {err}")
+            else:
+                print(f"  \033[32m✓\033[0m Installed '{name}' successfully")
+
+        elif action == "search" and len(rest) > 1:
+            query = " ".join(rest[1:])
+            results = marketplace.search(query)
+            if not results:
+                print(f"  No playbooks found for '{query}'")
+            else:
+                print(f"  Found {len(results)} playbook(s):\n")
+                for p in results:
+                    tags = " ".join(f"\033[90m#{t}\033[0m" for t in p.get("tags", []))
+                    print(f"  \033[36m{p['name']}\033[0m — {p.get('description', '')}")
+                    print(f"    {p.get('steps', '?')} steps │ by {p.get('author', '?')} {tags}")
+                    print()
+
+        elif action == "publish" and len(rest) > 1:
+            result = marketplace.publish(rest[1])
+            if "error" in result:
+                print(f"  \033[31m✗\033[0m {result['error']}")
+            else:
+                print(f"  \033[32m✓\033[0m Exported: {result['exported']}")
+                print(f"  {result['instructions']}")
+
+        elif action == "available":
+            available = marketplace.list_available()
+            if not available:
+                print("  Cannot reach marketplace or no playbooks available.")
+            else:
+                print(f"  Marketplace ({len(available)} playbooks):\n")
+                for p in available:
+                    print(f"  \033[36m{p['name']}\033[0m — {p.get('description', '')}")
+
+        elif action == "installed":
+            installed = marketplace.list_installed()
+            if not installed:
+                print("  No marketplace playbooks installed.")
+            else:
+                print(f"  Installed from marketplace ({len(installed)}):\n")
+                for p in installed:
+                    print(f"  \033[36m{p['name']}\033[0m ({p['steps']} steps, used {p['times_used']}x)")
+
         else:
-            print(f"Learned playbooks ({pb_store.count()}):\n")
-            for pb in pb_store.all():
-                print(f"  {pb.summary()}")
+            # Default: show all playbooks (learned + installed)
+            if pb_store.count() == 0:
+                print("  No playbooks yet. Use --memory to learn workflows or 'playbooks install' to get community ones.")
+            else:
+                print(f"  Playbooks ({pb_store.count()}):\n")
+                for pb in pb_store.all():
+                    source = "\033[90m[marketplace]\033[0m" if pb.id.startswith("market_") else "\033[90m[learned]\033[0m"
+                    print(f"  {source} {pb.summary()}")
+            print(f"\n  Commands: install <name> │ search <query> │ available │ publish <id> │ installed")
         return
     if cmd == "sessions":
         from koan.session_control import list_sessions, format_session_list, export_session

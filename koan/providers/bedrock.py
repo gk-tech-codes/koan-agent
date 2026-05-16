@@ -108,8 +108,8 @@ def _get_bedrock_client(region: str, role_arn: str = "", profile: str = ""):
 _SENTINEL = object()
 
 
-def _stream_in_thread(client, kwargs, q: queue.Queue, max_retries: int = 3):
-    """Run converse_stream in a background thread with retry on throttling."""
+def _stream_in_thread(client, kwargs, q: queue.Queue, region: str = "us-east-1", max_retries: int = 3):
+    """Run converse_stream in a background thread with retry on throttling and expired tokens."""
     for attempt in range(max_retries + 1):
         try:
             log.debug("converse_stream attempt %d, model=%s", attempt + 1, kwargs.get("modelId"))
@@ -126,6 +126,22 @@ def _stream_in_thread(client, kwargs, q: queue.Queue, max_retries: int = 3):
                 log.warning("Throttled by Bedrock, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
                 _time.sleep(wait)
                 continue
+            if "ExpiredTokenException" in error_str and attempt < max_retries:
+                import time as _time
+                import subprocess
+                log.warning("Token expired, refreshing credentials (attempt %d/%d)", attempt + 1, max_retries)
+                try:
+                    subprocess.run(
+                        ["ada", "credentials", "update", "--provider=conduit", "--profile=default", "--once"],
+                        capture_output=True, timeout=30,
+                    )
+                    # Recreate client with fresh creds
+                    import boto3
+                    client = boto3.client("bedrock-runtime", region_name=region)
+                    _time.sleep(1)
+                    continue
+                except Exception as refresh_exc:
+                    log.error("Failed to refresh credentials: %s", refresh_exc)
             log.error("Bedrock stream failed: %s", exc)
             q.put(exc)
             return
@@ -175,7 +191,7 @@ class BedrockProvider(BaseProvider):
 
         # Run blocking boto3 stream in a thread so asyncio isn't blocked
         q: queue.Queue = queue.Queue()
-        thread = threading.Thread(target=_stream_in_thread, args=(client, kwargs, q), daemon=True)
+        thread = threading.Thread(target=_stream_in_thread, args=(client, kwargs, q, self._region), daemon=True)
         thread.start()
 
         current_tool_id = ""
